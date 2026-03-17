@@ -71,6 +71,11 @@ def build_output_filename(prefix: str, timestamp: str, index: int, original_file
     return f"{prefix}_{timestamp}_{index:02d}{ext}"
 
 
+def _no_proxy_opener():
+    """Return a urllib opener that bypasses proxy for all requests (needed for localhost ComfyUI)."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _add_auth(req: urllib.request.Request, auth: str) -> None:
     if auth:
         req.add_header("Authorization", auth)
@@ -81,7 +86,7 @@ def queue_prompt(server_url, prompt_workflow, auth=""):
     req = urllib.request.Request(f"{server_url}/prompt", data=data, headers={'Content-Type': 'application/json'})
     _add_auth(req, auth)
     try:
-        with urllib.request.urlopen(req) as response:
+        with _no_proxy_opener().open(req) as response:
             return json.loads(response.read())
     except urllib.error.URLError as e:
         print(f"Error connecting to ComfyUI ({server_url}): {e}")
@@ -92,7 +97,7 @@ def get_history(server_url, prompt_id, auth=""):
     req = urllib.request.Request(f"{server_url}/history/{prompt_id}")
     _add_auth(req, auth)
     try:
-        with urllib.request.urlopen(req) as response:
+        with _no_proxy_opener().open(req) as response:
             return json.loads(response.read())
     except urllib.error.URLError:
         return None
@@ -104,7 +109,7 @@ def get_image(server_url, filename, subfolder, folder_type, auth=""):
     req = urllib.request.Request(f"{server_url}/view?{url_values}")
     _add_auth(req, auth)
     try:
-        with urllib.request.urlopen(req) as response:
+        with _no_proxy_opener().open(req) as response:
             return response.read()
     except urllib.error.URLError:
         return None

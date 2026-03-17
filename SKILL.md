@@ -57,11 +57,32 @@ This returns JSON with `"status": "online"` or `"status": "offline"`.
 
 ### Step 0: AI-Native Workflow Auto-Configuration (Optional)
 
-If the user provides you with a new ComfyUI workflow JSON (API format) and asks you to "configure it" or "add it":
+If the user provides you with a new ComfyUI workflow JSON and asks you to "configure it" or "add it":
+
+#### ⚠️ Workflow Format Check (Critical)
+ComfyUI has two JSON formats. **Only API format works with this skill.**
+
+- **API format** ✅: Top-level keys are node IDs (strings like `"1"`, `"6"`), each with `class_type` and `inputs`.
+  ```json
+  { "1": { "class_type": "KSampler", "inputs": { "seed": 42, ... } } }
+  ```
+- **UI format** ❌: Has a `nodes` array at top level — exported from ComfyUI browser by default.
+  ```json
+  { "nodes": [...], "links": [...], "last_node_id": 99 }
+  ```
+
+**If the workflow is UI format**, you must export it as API format first:
+- In ComfyUI browser: enable Dev Mode (Settings → Dev Mode), then use "Save (API format)"
+- Or convert programmatically — but this is error-prone for complex workflows with custom nodes
+
+#### Steps to add a workflow:
 1. Check the existing server configurations or default to `local`.
-2. Save the provided JSON file to `./data/<server_id>/workflows/<new_workflow_id>.json`.
+2. Save the **API format** JSON to `./data/<server_id>/<new_workflow_id>/workflow.json`
+   (**Note**: path is `data/<server_id>/<workflow_id>/workflow.json`, NOT `data/<server_id>/workflows/`)
 3. Analyze the JSON structure (look for `inputs` inside node definitions, e.g., `KSampler`'s `seed`, `CLIPTextEncode`'s `text` for positive/negative prompts, `EmptyLatentImage` for width/height).
-4. Automatically generate a schema mapping file and save it to `./data/<server_id>/schemas/<new_workflow_id>.json`. The schema format must follow:
+4. Automatically generate a schema mapping file and save it to `./data/<server_id>/<new_workflow_id>/schema.json`
+   (**Note**: path is `data/<server_id>/<workflow_id>/schema.json`, NOT `data/<server_id>/schemas/`)
+   The schema format must follow:
    ```json
    {
      "workflow_id": "<new_workflow_id>",
@@ -70,11 +91,11 @@ If the user provides you with a new ComfyUI workflow JSON (API format) and asks 
      "enabled": true,
      "parameters": {
        "prompt": { "node_id": "3", "field": "text", "required": true, "type": "string", "description": "Positive prompt" }
-       // Add other sensible parameters that the user might want to tweak
      }
    }
    ```
-5. Tell the user that the new workflow on the specific server is successfully configured and ready to be used.
+5. Verify with `~/agent-venv/bin/python3 scripts/registry.py list --agent` — the new workflow should appear.
+6. Tell the user that the new workflow on the specific server is successfully configured and ready to be used.
 
 ### Step 1: Query Available Workflows (Registry)
 
@@ -123,3 +144,40 @@ Once you obtain the absolute local path to the generated image, use your native 
 1. **ComfyUI Offline**: If the script returns "Error connecting to ComfyUI", run a server status check and ask the user to start the ComfyUI service for that server URL before retrying.
 2. **Schema Not Found**: If you directly called a workflow the user mentioned verbally, but the script reports a missing Schema, perform Step 1 `registry.py` and tell the user they need to first go to the Web UI panel to upload and configure the mapping for that workflow on the desired server.
 3. **Parameter Format Error**: Ensure that the JSON passed via `--args` is a valid JSON string wrapped in single quotes.
+4. **HTTP 405 on POST /prompt**: Caused by system-level `HTTP_PROXY` env var (e.g. `HTTP_PROXY=http://127.0.0.1:6190`). `urllib` routes through the proxy in absolute-URI format which ComfyUI rejects. **Fix already applied** in `comfyui_client.py`: all urllib openers use `ProxyHandler({})` to bypass proxy for localhost. If you see 405 again, verify this fix is in place.
+
+## i2i (Image-to-Image) Workflow Guide
+
+### Prerequisites
+1. Upload input image to ComfyUI first:
+   ```bash
+   curl -s -X POST http://127.0.0.1:8188/upload/image \
+     -F "image=@/path/to/input.png" \
+     -F "type=input" -F "overwrite=true"
+   ```
+   Returns `{"name": "filename.png", ...}` — use the `name` value as the `image` parameter.
+
+2. Workflow must be in **API format** (flat dict with node IDs as keys), NOT UI format (has `nodes` array).
+   - UI format: exported from ComfyUI browser as "Save (API format)" or converted manually.
+   - The `workflow.json` in each skill data folder must be API format.
+
+### Ready-to-use i2i workflow: `local/flux-i2i`
+Located at: `data/local/flux-i2i/`
+- Model: `FLUX.1-schnell 可炼丹版本_OpenFLUX_V1.safetensors`
+- CLIP: `t5xxl_fp16.safetensors` + `clip_l.safetensors` (flux type)
+- VAE: `ae.safetensors`
+- Parameters: `prompt` (required), `image` (required), `denoise` (default 0.65), `steps` (default 20), `seed`
+
+Example call:
+```bash
+cd ~/Documents/10.github/Tool-packages/comfyui-skill
+~/agent-venv/bin/python3 scripts/comfyui_client.py \
+  --workflow local/flux-i2i \
+  --args '{"prompt": "photorealistic woman, high quality", "image": "input.png", "denoise": 0.65}'
+```
+
+### Adding a new i2i workflow
+1. Export workflow from ComfyUI in **API format** (File → Save (API format))
+2. Save to `data/local/<workflow-id>/workflow.json`
+3. Create `data/local/<workflow-id>/schema.json` mapping key params (prompt, image, denoise, seed, etc.) to node IDs
+4. Verify with `~/agent-venv/bin/python3 scripts/registry.py list --agent`
